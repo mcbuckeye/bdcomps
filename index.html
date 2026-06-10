@@ -1,0 +1,319 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>BeOne Oncology Comps Launcher</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark">B1</div>
+        <div>
+          <strong>Comps Launcher</strong>
+          <span>BD / M&amp;A</span>
+        </div>
+      </div>
+
+      <nav class="nav" aria-label="Primary">
+        <button class="nav-item active" data-view="launcher">Launcher</button>
+        <button class="nav-item" data-view="prompt">Prompt Review</button>
+        <button class="nav-item" data-view="run">Run Progress</button>
+        <button class="nav-item" data-view="results">Results</button>
+        <button class="nav-item" data-view="history">Run History</button>
+      </nav>
+
+      <div class="status-panel">
+        <span class="pulse"></span>
+        <div>
+          <strong id="systemStatus">Live search mode</strong>
+          <span>Server-backed web pull</span>
+        </div>
+      </div>
+    </aside>
+
+    <main class="shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Oncology comps launcher</p>
+          <h1>Configure a verified comps pull, review the prompt, and generate memo-ready outputs.</h1>
+        </div>
+        <div class="topbar-actions">
+          <button class="ghost-button" id="resetAll">Reset all</button>
+          <button class="ghost-button" id="generatePrompt">Generate prompt</button>
+          <button class="primary-button" id="runPull">Run pull</button>
+        </div>
+      </header>
+
+      <ol class="stepper" aria-label="Workflow">
+        <li class="active"><button type="button" data-view="launcher">1. Scope</button></li>
+        <li><button type="button" data-view="prompt">2. Prompt</button></li>
+        <li><button type="button" data-view="run">3. Progress</button></li>
+        <li><button type="button" data-view="results">4. Outputs</button></li>
+        <li><button type="button" data-view="history">5. History</button></li>
+      </ol>
+
+      <section class="view active" id="launcher">
+        <div class="launcher-grid">
+          <section class="panel">
+            <div class="panel-header">
+              <div>
+                <h2>Scope &amp; Filters</h2>
+                <p>Every field is optional. Blank means no constraint.</p>
+              </div>
+              <span class="badge" id="activeFilterCount">0 filters</span>
+            </div>
+
+            <div class="form-grid">
+              <label>Therapeutic area / tumor type
+                <input id="tumorType" type="text" placeholder="e.g. breast cancer, NSCLC, heme malignancies" />
+              </label>
+              <label>Target / MOA
+                <input id="targetMoa" type="text" placeholder="e.g. HER2, BTK, PD-1, CD3 engager" />
+              </label>
+              <div class="combo-field" data-field="modality">
+                <label for="modalityInput">Modality</label>
+                <div class="chip-input">
+                  <div class="selected-chips" id="modalityChips"></div>
+                  <input id="modalityInput" type="text" placeholder="Type custom modality..." autocomplete="off" />
+                </div>
+                <div class="suggestions" id="modalitySuggestions"></div>
+              </div>
+              <div class="combo-field" data-field="dealType">
+                <label for="dealTypeInput">Deal type</label>
+                <div class="chip-input">
+                  <div class="selected-chips" id="dealTypeChips"></div>
+                  <input id="dealTypeInput" type="text" placeholder="Type custom deal type..." autocomplete="off" />
+                </div>
+                <div class="suggestions" id="dealTypeSuggestions"></div>
+              </div>
+              <div class="combo-field" data-field="stage">
+                <label for="stageInput">Stage</label>
+                <div class="chip-input">
+                  <div class="selected-chips" id="stageChips"></div>
+                  <input id="stageInput" type="text" placeholder="Type custom stage..." autocomplete="off" />
+                </div>
+                <div class="suggestions" id="stageSuggestions"></div>
+              </div>
+              <div class="combo-field" data-field="geography">
+                <label for="geographyInput">Geography</label>
+                <div class="chip-input">
+                  <div class="selected-chips" id="geographyChips"></div>
+                  <input id="geographyInput" type="text" placeholder="Type custom geography..." autocomplete="off" />
+                </div>
+                <div class="suggestions" id="geographySuggestions"></div>
+              </div>
+              <label>Date range
+                <select id="dateRange">
+                  <option selected>Any date</option>
+                  <option>2023-present</option>
+                  <option>Last 3 years</option>
+                  <option>Last 5 years</option>
+                  <option>Last 10 years</option>
+                  <option>Custom range</option>
+                </select>
+              </label>
+              <div class="date-range-fields" id="customDateRange" hidden>
+                <label>Start date
+                  <input id="startDate" type="date" value="2023-01-01" />
+                </label>
+                <label>End date
+                  <input id="endDate" type="date" />
+                </label>
+              </div>
+              <label>Minimum upfront, USD M
+                <input id="minUpfront" type="number" min="0" value="0" />
+              </label>
+              <label>Minimum biobucks, USD M
+                <input id="minBiobucks" type="number" min="0" value="0" />
+              </label>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-header">
+              <div>
+                <h2>Structural Filters</h2>
+                <p>Checked categories are stripped into the audit sheet.</p>
+              </div>
+            </div>
+            <div class="check-grid" id="structuralFilters">
+              <label><input type="checkbox" value="co-dev/co-commercialization" checked /> Co-dev / co-commercialization</label>
+              <label><input type="checkbox" value="royalty monetization" checked /> Royalty monetization</label>
+              <label><input type="checkbox" value="unexercised options" checked /> Unexercised options</label>
+              <label><input type="checkbox" value="academic/non-profit" checked /> Academic / non-profit</label>
+              <label><input type="checkbox" value="equity-only" checked /> Equity-only</label>
+              <label><input type="checkbox" value="SPAC/shell" checked /> SPAC / shell</label>
+              <label><input type="checkbox" value="intra-group" checked /> Intra-group</label>
+            </div>
+          </section>
+        </div>
+
+        <div class="launcher-grid">
+          <section class="panel">
+            <div class="panel-header">
+              <div>
+                <h2>Candidate List</h2>
+                <p>Start from pasted deals, structured rows, or web-only discovery.</p>
+              </div>
+            </div>
+            <div class="segmented" role="tablist" aria-label="Candidate input mode">
+              <button class="active" data-mode="web">Web-only</button>
+              <button data-mode="paste">Paste raw</button>
+              <button data-mode="rows">Structured rows</button>
+            </div>
+            <label class="file-upload">Upload database exports
+              <input id="datasetFiles" type="file" accept=".csv,.xlsx" multiple />
+            </label>
+            <div class="upload-list" id="uploadList">No uploaded datasets.</div>
+            <textarea id="candidateInput" rows="8" placeholder="Optional. Paste raw candidate text or one structured row per line."></textarea>
+          </section>
+
+          <section class="panel">
+            <div class="panel-header">
+              <div>
+                <h2>Output Options</h2>
+                <p>Choose what the run should return.</p>
+              </div>
+            </div>
+            <div class="check-grid">
+              <label><input id="wantExcel" type="checkbox" checked /> Excel workbook</label>
+              <label><input id="wantSummary" type="checkbox" checked /> Written summary</label>
+              <label><input id="wantBenchmark" type="checkbox" /> Benchmark against target</label>
+            </div>
+            <label class="target-box">Target deal to benchmark
+              <textarea id="targetDeal" rows="5" placeholder="Optional. Paste target deal economics, asset, territory, stage, or memo context."></textarea>
+            </label>
+          </section>
+        </div>
+      </section>
+
+      <section class="view" id="prompt">
+        <section class="panel">
+          <div class="panel-header">
+            <div>
+              <h2>Generated Structured Prompt</h2>
+              <p>This is the server-side request the app would send to the OpenAI comps agent.</p>
+            </div>
+            <button class="ghost-button" id="copyPrompt">Copy prompt</button>
+          </div>
+          <pre class="prompt-box" id="promptPreview">Generate a prompt to review it here.</pre>
+        </section>
+      </section>
+
+      <section class="view" id="run">
+        <div class="content-grid">
+          <section class="panel">
+            <div class="panel-header">
+              <div>
+                <h2>Run Progress</h2>
+                <p id="runStatus">No run started.</p>
+              </div>
+              <span class="badge" id="runBadge">Idle</span>
+            </div>
+            <div class="progress-meter"><span id="progressFill"></span></div>
+            <div class="progress-log" id="progressLog"></div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-header">
+              <div>
+                <h2>Run Details</h2>
+                <p>Run pull calls the local backend, which uses OpenAI web search and primary-source verification.</p>
+              </div>
+            </div>
+            <div class="metrics-grid compact">
+              <article class="metric"><span>Candidates found</span><strong id="metricFound">0</strong></article>
+              <article class="metric"><span>Clean comps</span><strong id="metricClean">0</strong></article>
+              <article class="metric"><span>Stripped</span><strong id="metricStripped">0</strong></article>
+              <article class="metric"><span>Confidence</span><strong id="metricConfidence">-</strong></article>
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <section class="view" id="results">
+        <section class="panel">
+          <div class="panel-header">
+            <div>
+              <h2>Written Summary</h2>
+              <p>Flags: OK verified, REVIEW needs analyst check, WATCH directional comp.</p>
+            </div>
+            <div class="topbar-actions">
+              <button class="ghost-button" id="downloadSummary">Download summary</button>
+              <button class="primary-button" id="downloadExcel">Download Excel</button>
+            </div>
+          </div>
+          <div class="summary-box" id="summaryOutput">Run a pull to generate the summary.</div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-header">
+            <div>
+              <h2>Comps</h2>
+              <p>Primary-source verified rows that pass structural filters.</p>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Flag</th>
+                  <th>Deal</th>
+                  <th>Asset</th>
+                  <th>Modality</th>
+                  <th>Stage</th>
+                  <th>Territory</th>
+                  <th>Upfront</th>
+                  <th>Biobucks</th>
+                  <th>Primary source</th>
+                </tr>
+              </thead>
+              <tbody id="compRows"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-header">
+            <div>
+              <h2>Stripped Deals Audit</h2>
+              <p>Deals removed by structural filters or error-pattern screening.</p>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Deal</th>
+                  <th>Reason stripped</th>
+                  <th>Source</th>
+                  <th>Analyst note</th>
+                </tr>
+              </thead>
+              <tbody id="strippedRows"></tbody>
+            </table>
+          </div>
+        </section>
+      </section>
+
+      <section class="view" id="history">
+        <section class="panel">
+          <div class="panel-header">
+            <div>
+              <h2>Run History</h2>
+              <p>Saved locally in this prototype. Production should persist this server-side per user.</p>
+            </div>
+            <button class="ghost-button" id="clearHistory">Clear history</button>
+          </div>
+          <div class="history-list" id="historyList"></div>
+        </section>
+      </section>
+    </main>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+    <script src="app.js?v=20"></script>
+  </body>
+</html>
