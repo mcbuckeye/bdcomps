@@ -36,11 +36,14 @@ load_env_file()
 HOST = os.environ.get("COMPS_HOST", "127.0.0.1")
 PORT = int(os.environ.get("COMPS_PORT", "4174"))
 OPENAI_URL = "https://api.openai.com/v1/responses"
-MODEL = os.environ.get("OPENAI_MODEL", "gpt-5")
-OPENAI_TIMEOUT_SECONDS = int(os.environ.get("OPENAI_TIMEOUT_SECONDS", "600"))
+MODEL = os.environ.get("OPENAI_MODEL", "gpt-5.5")
+OPENAI_TIMEOUT_SECONDS = int(os.environ.get("OPENAI_TIMEOUT_SECONDS", "900"))
 MAX_OUTPUT_TOKENS = int(os.environ.get("OPENAI_MAX_OUTPUT_TOKENS", "30000"))
-OPENAI_RETRIES = int(os.environ.get("OPENAI_RETRIES", "3"))
+OPENAI_RETRIES = int(os.environ.get("OPENAI_RETRIES", "4"))
 OPENAI_DISABLE_PROXY = os.environ.get("OPENAI_DISABLE_PROXY", "1") != "0"
+OPENAI_REASONING_EFFORT = os.environ.get("OPENAI_REASONING_EFFORT", "high")
+OPENAI_SEARCH_CONTEXT_SIZE = os.environ.get("OPENAI_SEARCH_CONTEXT_SIZE", "high")
+OPENAI_SEARCH_TOKEN_BUDGET = os.environ.get("OPENAI_SEARCH_TOKEN_BUDGET", "unlimited")
 
 
 SYSTEM_PROMPT = """You are an oncology BD/M&A comps research agent for BeOne Medicines.
@@ -197,8 +200,15 @@ def call_openai(prompt, scope, log):
     started = time.time()
     payload = {
         "model": MODEL,
-        "tools": [{"type": "web_search"}],
+        "tools": [
+            {
+                "type": "web_search",
+                "search_context_size": OPENAI_SEARCH_CONTEXT_SIZE,
+                "return_token_budget": OPENAI_SEARCH_TOKEN_BUDGET,
+            }
+        ],
         "tool_choice": "auto",
+        "reasoning": {"effort": OPENAI_REASONING_EFFORT},
         "max_output_tokens": MAX_OUTPUT_TOKENS,
         "input": [
             {"role": "system", "content": SYSTEM_PROMPT},

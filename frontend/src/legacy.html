@@ -7,6 +7,32 @@
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
+    <section class="auth-gate" id="authGate">
+      <div class="auth-panel">
+        <div>
+          <p class="eyebrow">Workspace sign in</p>
+          <h1>Comps Launcher</h1>
+          <p>Use a local email/password account for now. The workspace model is ready for Azure AD SSO later.</p>
+        </div>
+        <form id="authForm" class="auth-form">
+          <label>Email
+            <input id="authEmail" type="email" autocomplete="email" required />
+          </label>
+          <label>Password
+            <input id="authPassword" type="password" autocomplete="current-password" minlength="8" required />
+          </label>
+          <label id="displayNameLabel" hidden>Display name
+            <input id="authDisplayName" type="text" autocomplete="name" />
+          </label>
+          <div class="dialog-actions">
+            <button class="primary-button" id="authSubmit" type="submit">Sign in</button>
+            <button class="ghost-button" id="toggleAuthMode" type="button">Create account</button>
+          </div>
+          <p class="auth-error" id="authError" role="alert"></p>
+        </form>
+      </div>
+    </section>
+
     <aside class="sidebar">
       <div class="brand">
         <div class="brand-mark">B1</div>
@@ -23,6 +49,12 @@
         <button class="nav-item" data-view="results">Results</button>
         <button class="nav-item" data-view="history">Run History</button>
       </nav>
+
+      <div class="user-panel">
+        <strong id="activeUser">Not signed in</strong>
+        <span id="activeWorkspace">No workspace</span>
+        <button class="ghost-button compact-button" id="logoutButton" type="button">Sign out</button>
+      </div>
 
       <div class="status-panel">
         <span class="pulse"></span>
@@ -182,6 +214,13 @@
               <label><input id="wantSummary" type="checkbox" checked /> Written summary</label>
               <label><input id="wantBenchmark" type="checkbox" /> Benchmark against target</label>
             </div>
+            <label class="target-box">Pull mode
+              <select id="pullMode">
+                <option value="standard" selected>Standard</option>
+                <option value="draft">Draft</option>
+                <option value="memo-ready">Memo-ready</option>
+              </select>
+            </label>
             <label class="target-box">Target deal to benchmark
               <textarea id="targetDeal" rows="5" placeholder="Optional. Paste target deal economics, asset, territory, stage, or memo context."></textarea>
             </label>
@@ -306,9 +345,9 @@
           <div class="panel-header">
             <div>
               <h2>Run History</h2>
-              <p>Saved locally in this prototype. Production should persist this server-side per user.</p>
+              <p>Saved in Postgres for the active workspace.</p>
             </div>
-            <button class="ghost-button" id="clearHistory">Clear history</button>
+            <button class="ghost-button" id="clearHistory">Refresh history</button>
           </div>
           <div class="history-list" id="historyList"></div>
         </section>

@@ -340,6 +340,12 @@ const LIVE_BACKEND_TIMEOUT_MS = 45 * 60 * 1000;
 const PULL_POLL_INTERVAL_MS = 5000;
 let runTimer = null;
 let runStartedAt = null;
+let authMode = "login";
+let authState = { user: null, workspaces: [], activeWorkspaceId: null };
+let activeEventSource = null;
+let serverHistory = [];
+
+document.body.classList.add("auth-pending");
 
 const currency = (value) => `$${Number(value || 0).toLocaleString()}M`;
 
@@ -349,6 +355,90 @@ function showToast(message) {
   toast.classList.add("show");
   clearTimeout(showToast.timer);
   showToast.timer = setTimeout(() => toast.classList.remove("show"), 2600);
+}
+
+function activeWorkspace() {
+  return authState.workspaces.find((workspace) => workspace.id === authState.activeWorkspaceId) || authState.workspaces[0] || null;
+}
+
+function setAuthUi(authenticated) {
+  document.body.classList.toggle("authenticated", authenticated);
+  document.body.classList.toggle("auth-pending", !authenticated);
+  document.getElementById("activeUser").textContent = authenticated ? authState.user.email : "Not signed in";
+  document.getElementById("activeWorkspace").textContent = authenticated ? (activeWorkspace()?.name || "Personal workspace") : "No workspace";
+}
+
+function setAuthMode(nextMode) {
+  authMode = nextMode;
+  const signup = authMode === "signup";
+  document.getElementById("authSubmit").textContent = signup ? "Create account" : "Sign in";
+  document.getElementById("toggleAuthMode").textContent = signup ? "Use existing account" : "Create account";
+  document.getElementById("displayNameLabel").hidden = !signup;
+  document.getElementById("authPassword").autocomplete = signup ? "new-password" : "current-password";
+  document.getElementById("authError").textContent = "";
+}
+
+async function apiFetch(url, options = {}) {
+  const response = await fetch(url, { credentials: "include", ...options });
+  if (response.status === 401) {
+    authState = { user: null, workspaces: [], activeWorkspaceId: null };
+    setAuthUi(false);
+  }
+  return response;
+}
+
+async function initializeAuth() {
+  try {
+    const payload = await fetchJson("/api/auth/me");
+    authState = {
+      user: payload.user,
+      workspaces: payload.workspaces || [],
+      activeWorkspaceId: payload.active_workspace_id
+    };
+    setAuthUi(true);
+    await renderHistory();
+  } catch {
+    setAuthUi(false);
+  }
+}
+
+async function submitAuth(event) {
+  event.preventDefault();
+  const authError = document.getElementById("authError");
+  authError.textContent = "";
+  const email = document.getElementById("authEmail").value.trim();
+  const password = document.getElementById("authPassword").value;
+  const displayName = document.getElementById("authDisplayName").value.trim();
+  try {
+    const payload = await fetchJson(authMode === "signup" ? "/api/auth/signup" : "/api/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password, display_name: displayName || undefined })
+    });
+    authState = {
+      user: payload.user,
+      workspaces: payload.workspaces || [],
+      activeWorkspaceId: payload.active_workspace_id
+    };
+    setAuthUi(true);
+    await renderHistory();
+    showToast(authMode === "signup" ? "Account created." : "Signed in.");
+  } catch (error) {
+    authError.textContent = error.message || "Sign in failed.";
+  }
+}
+
+async function logout() {
+  if (activeEventSource) {
+    activeEventSource.close();
+    activeEventSource = null;
+  }
+  await fetchJson("/api/auth/logout", { method: "POST" }).catch(() => null);
+  authState = { user: null, workspaces: [], activeWorkspaceId: null };
+  currentRun = null;
+  serverHistory = [];
+  setAuthUi(false);
+  showToast("Signed out.");
 }
 
 function showView(viewId) {
@@ -451,6 +541,7 @@ function getScope() {
     minBiobucks: Number(document.getElementById("minBiobucks").value || 0),
     structuralFilters: [...document.querySelectorAll("#structuralFilters input:checked")].map((input) => input.value),
     candidateMode: mode,
+    pullMode: document.getElementById("pullMode")?.value || "standard",
     candidateInput: document.getElementById("candidateInput").value.trim(),
     uploadedFiles: files.map((file) => ({ name: file.name, size: file.size, type: file.type })),
     outputs: {
@@ -807,7 +898,7 @@ async function runPull() {
     renderRun(run);
     appendActivityLog(run.activityLog);
     saveRun(run);
-    renderHistory();
+    await renderHistory();
     document.getElementById("runBadge").textContent = "Complete";
     stopRunTimer(true);
     showView("results");
@@ -833,63 +924,145 @@ function delay(ms) {
 }
 
 async function callLiveBackend() {
+  const workspace = activeWorkspace();
+  if (!workspace) {
+    throw new Error("Sign in and select a workspace before running a pull.");
+  }
   const files = [...(document.getElementById("datasetFiles")?.files || [])];
-  let response;
+  const pullMode = document.getElementById("pullMode")?.value || "standard";
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), LIVE_BACKEND_TIMEOUT_MS);
+  let startPayload;
   if (files.length) {
     const form = new FormData();
     form.append("prompt", promptText || buildPrompt());
     form.append("scope", JSON.stringify(getScope()));
+    form.append("mode", pullMode);
+    form.append("use_cache", "true");
     files.forEach((file) => form.append("datasets", file, file.name));
     try {
-      response = await fetch("/api/pull/form", { method: "POST", body: form, signal: controller.signal });
+      startPayload = await fetchJson(`/api/workspaces/${workspace.id}/pulls/form`, { method: "POST", body: form, signal: controller.signal });
     } catch (error) {
       if (error.name === "AbortError") {
-        throw new Error("Live backend request timed out after 11 minutes. Narrow the scope or increase OPENAI_TIMEOUT_SECONDS and rerun.");
+        throw new Error("Live backend request timed out after 45 minutes. Narrow the scope or rerun later.");
       }
       throw error;
-    } finally {
-      clearTimeout(timeout);
     }
   } else {
     try {
-      response = await fetch("/api/pull", {
+      startPayload = await fetchJson(`/api/workspaces/${workspace.id}/pulls`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt: promptText || buildPrompt(), scope: getScope() }),
+        body: JSON.stringify({ prompt: promptText || buildPrompt(), scope: getScope(), mode: pullMode, use_cache: true }),
         signal: controller.signal
       });
     } catch (error) {
       if (error.name === "AbortError") {
-        throw new Error("Live backend request timed out after 11 minutes. Narrow the scope or increase OPENAI_TIMEOUT_SECONDS and rerun.");
+        throw new Error("Live backend request timed out after 45 minutes. Narrow the scope or rerun later.");
       }
       throw error;
-    } finally {
-      clearTimeout(timeout);
     }
   }
+
+  if (!startPayload.ok || !startPayload.run_id) {
+    const error = new Error(startPayload.error || "Live web-search request failed to start.");
+    error.activityLog = startPayload.activity_log || [];
+    clearTimeout(timeout);
+    throw error;
+  }
+
+  appendProgress("Backend job started", `Run ${startPayload.run_id} is running on the FastAPI backend. The browser will stream progress and poll as a fallback.`);
+  document.getElementById("runStatus").textContent = `Backend job ${startPayload.run_id} running`;
+  subscribeRunEvents(workspace.id, startPayload.run_id);
+
+  try {
+    return await pollBackendRun(workspace.id, startPayload.run_id, controller.signal);
+  } finally {
+    clearTimeout(timeout);
+    if (activeEventSource) {
+      activeEventSource.close();
+      activeEventSource = null;
+    }
+  }
+}
+
+async function fetchJson(url, options = {}) {
+  const response = await apiFetch(url, options);
   let payload = null;
   try {
     payload = await response.json();
   } catch {
-    throw new Error("Live backend is not running. Start server.py and open http://127.0.0.1:4174/index.html.");
+    throw new Error("Live backend is not returning JSON. Check backend logs.");
   }
-  if (!response.ok || !payload.ok) {
-    const error = new Error(payload?.error || "Live web-search request failed.");
-    error.activityLog = payload?.activity_log || [];
+  if (!response.ok) {
+    const detail = typeof payload?.detail === "string" ? payload.detail : payload?.detail?.error;
+    const error = new Error(payload?.error || detail || "Live web-search request failed.");
+    error.activityLog = payload?.activity_log || payload?.detail?.activity_log || [];
     throw error;
   }
-  return normalizeBackendRun(payload.run);
+  return payload;
 }
 
-function normalizeBackendRun(apiRun) {
+function subscribeRunEvents(workspaceId, runId) {
+  if (activeEventSource) {
+    activeEventSource.close();
+  }
+  activeEventSource = new EventSource(`/api/workspaces/${workspaceId}/runs/${runId}/events`);
+  let lastEventText = "";
+  activeEventSource.addEventListener("activity", (event) => {
+    try {
+      const payload = JSON.parse(event.data);
+      const eventText = `${payload.event || ""}|${payload.detail || ""}|${payload.time || ""}`;
+      if (eventText !== lastEventText) {
+        appendProgress(payload.event || "Backend activity", payload.detail || "Run update received.");
+        lastEventText = eventText;
+      }
+    } catch {
+      appendProgress("Backend activity", "Run update received.");
+    }
+  });
+  activeEventSource.onerror = () => {
+    appendProgress("Progress stream reconnecting", "Polling remains active as a fallback.");
+  };
+}
+
+async function pollBackendRun(workspaceId, runId, signal) {
+  let lastActivityCount = 0;
+  while (true) {
+    if (signal.aborted) {
+      throw new Error("Live backend request timed out after 45 minutes. Narrow the scope or rerun later.");
+    }
+    await delay(PULL_POLL_INTERVAL_MS);
+    const payload = await fetchJson(`/api/workspaces/${workspaceId}/runs/${runId}`, { signal });
+    const activityCount = payload.activity_log?.length || 0;
+    if (activityCount > lastActivityCount) {
+      const last = payload.activity_log[activityCount - 1];
+      appendProgress(last?.event || "Backend activity", last?.detail || `Run ${runId} is still running.`);
+      lastActivityCount = activityCount;
+    }
+    if (payload.status === "completed" && payload.run) {
+      return normalizeBackendRun(payload.run, payload);
+    }
+    if (payload.status === "failed" || payload.ok === false) {
+      const error = new Error(payload.error || "Live web-search request failed.");
+      error.activityLog = payload.activity_log || [];
+      throw error;
+    }
+    document.getElementById("runStatus").textContent = `Backend job ${runId} running`;
+  }
+}
+
+function normalizeBackendRun(apiRun, meta = {}) {
   const normalizeNumber = (value) => value === null || value === undefined || value === "" ? 0 : Number(value) || 0;
   return {
-    id: `LIVE-${new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14)}`,
-    createdAt: new Date().toISOString(),
-    prompt: promptText || buildPrompt(),
-    scope: getScope(),
+    id: meta.run_id ? `RUN-${meta.run_id}` : `LIVE-${new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14)}`,
+    backendRunId: meta.run_id || null,
+    createdAt: meta.created_at || new Date().toISOString(),
+    completedAt: meta.completed_at || "",
+    prompt: meta.prompt || promptText || buildPrompt(),
+    scope: meta.scope || getScope(),
+    mode: meta.mode || "standard",
+    stages: meta.stages || [],
     live: true,
     summary: apiRun.summary || "",
     comps: (apiRun.comps || []).map((deal, index) => ({
@@ -986,9 +1159,26 @@ function appendActivityLog(activityLog = []) {
   });
 }
 
-function downloadWorkbook() {
+async function downloadWorkbook() {
   if (!currentRun) {
     showToast("Run a pull first.");
+    return;
+  }
+  const workspace = activeWorkspace();
+  if (workspace && currentRun.backendRunId) {
+    const response = await apiFetch(`/api/workspaces/${workspace.id}/runs/${currentRun.backendRunId}/exports/workbook`);
+    if (!response.ok) {
+      showToast("Workbook export is not available yet.");
+      return;
+    }
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `run-${currentRun.backendRunId}-oncology-comps.xlsx`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+    showToast("Workbook downloaded.");
     return;
   }
   const workbook = `<?xml version="1.0"?>
@@ -1034,38 +1224,70 @@ function downloadBlob(filename, content, type) {
 }
 
 function saveRun(run) {
-  const history = getHistory();
-  history.unshift({
-    id: run.id,
-    createdAt: run.createdAt,
-    title: `${run.scope.modality.join(", ") || "Any modality"} / ${run.scope.targetMoa || "Any target"}`,
-    clean: run.comps.length,
-    stripped: run.stripped.length,
-    activityCount: run.activityLog?.length || 0,
-    activityLog: run.activityLog || [],
-    prompt: run.prompt
-  });
-  localStorage.setItem(historyKey, JSON.stringify(history.slice(0, 12)));
+  currentRun = run;
 }
 
 function getHistory() {
-  try {
-    return JSON.parse(localStorage.getItem(historyKey) || "[]");
-  } catch {
-    return [];
-  }
+  return serverHistory;
 }
 
-function renderHistory() {
+async function renderHistory() {
+  const workspace = activeWorkspace();
+  if (!workspace) {
+    document.getElementById("historyList").innerHTML = `<article><strong>Sign in to view run history.</strong><span>Workspace runs will appear here.</span></article>`;
+    return;
+  }
+  try {
+    const payload = await fetchJson(`/api/workspaces/${workspace.id}/runs?limit=50`);
+    serverHistory = payload.runs || [];
+  } catch (error) {
+    document.getElementById("historyList").innerHTML = `<article><strong>Could not load history.</strong><span>${escapeHtml(error.message)}</span></article>`;
+    return;
+  }
   const history = getHistory();
   document.getElementById("historyList").innerHTML = history.length ? history.map((run) => `
     <article>
-      <strong>${escapeHtml(run.id)} - ${escapeHtml(run.title)}</strong>
-      <span>${new Date(run.createdAt).toLocaleString()} | ${run.clean} clean comps | ${run.stripped} stripped | ${run.activityCount || 0} activity entries</span>
-      ${run.activityLog?.length ? `<details><summary>Activity log</summary><div class="history-activity">${run.activityLog.map((entry) => `<p><strong>${escapeHtml(entry.event || "Activity")}</strong><br>${escapeHtml([entry.time, entry.detail, entry.metrics ? Object.entries(entry.metrics).map(([key, value]) => `${key}: ${value}`).join(" | ") : ""].filter(Boolean).join(" - "))}</p>`).join("")}</div></details>` : ""}
-      <button class="ghost-button" data-history-prompt="${escapeHtml(run.id)}">View prompt</button>
+      <strong>RUN-${escapeHtml(run.id)} - ${escapeHtml(historyTitle(run))}</strong>
+      <span>${new Date(run.created_at).toLocaleString()} | ${escapeHtml(run.status)} | ${countComps(run)} clean comps | ${countStripped(run)} stripped | ${durationText(run)}</span>
+      ${run.activity_log?.length ? `<details><summary>Activity log</summary><div class="history-activity">${run.activity_log.map((entry) => `<p><strong>${escapeHtml(entry.event || "Activity")}</strong><br>${escapeHtml([entry.time, entry.detail, entry.metrics ? Object.entries(entry.metrics).map(([key, value]) => `${key}: ${value}`).join(" | ") : ""].filter(Boolean).join(" - "))}</p>`).join("")}</div></details>` : ""}
+      <div class="dialog-actions">
+        <button class="ghost-button" data-history-run="${escapeHtml(run.id)}">Open run</button>
+        <button class="ghost-button" data-history-prompt="${escapeHtml(run.id)}">View prompt</button>
+      </div>
     </article>
   `).join("") : `<article><strong>No runs yet.</strong><span>Completed runs will appear here.</span></article>`;
+}
+
+function historyTitle(run) {
+  const scope = run.scope || {};
+  return `${(scope.modality || []).join(", ") || "Any modality"} / ${scope.targetMoa || "Any target"}`;
+}
+
+function countComps(run) {
+  return run.result?.comps?.length || 0;
+}
+
+function countStripped(run) {
+  return run.result?.stripped_deals?.length || 0;
+}
+
+function durationText(run) {
+  if (!run.started_at || !run.completed_at) return "duration pending";
+  const seconds = Math.max(0, Math.round((new Date(run.completed_at) - new Date(run.started_at)) / 1000));
+  return formatElapsed(seconds);
+}
+
+async function openHistoryRun(runId) {
+  const workspace = activeWorkspace();
+  if (!workspace) return;
+  const payload = await fetchJson(`/api/workspaces/${workspace.id}/runs/${runId}`);
+  if (!payload.run) {
+    showToast("Run has no completed result yet.");
+    return;
+  }
+  renderRun(normalizeBackendRun(payload.run, payload));
+  appendActivityLog(payload.activity_log || []);
+  showView("results");
 }
 
 function renderUploadList() {
@@ -1122,6 +1344,7 @@ function resetAll() {
   document.getElementById("wantExcel").checked = true;
   document.getElementById("wantSummary").checked = true;
   document.getElementById("wantBenchmark").checked = false;
+  document.getElementById("pullMode").value = "standard";
   updateCustomDateRange();
   buildPrompt();
   showToast("Launcher reset.");
@@ -1158,6 +1381,7 @@ document.addEventListener("click", (event) => {
   const add = event.target.dataset?.add;
   const remove = event.target.dataset?.remove;
   const historyPrompt = event.target.dataset?.historyPrompt;
+  const historyRun = event.target.dataset?.historyRun;
   if (add) {
     const [field, value] = add.split(":");
     addCriterion(field, value);
@@ -1167,11 +1391,14 @@ document.addEventListener("click", (event) => {
     removeCriterion(field, value);
   }
   if (historyPrompt) {
-    const run = getHistory().find((item) => item.id === historyPrompt);
+    const run = getHistory().find((item) => String(item.id) === String(historyPrompt));
     if (run) {
       document.getElementById("promptPreview").textContent = run.prompt;
       showView("prompt");
     }
+  }
+  if (historyRun) {
+    openHistoryRun(historyRun).catch((error) => showToast(error.message || "Could not open run."));
   }
 });
 
@@ -1214,14 +1441,17 @@ document.getElementById("runPull").addEventListener("click", runPull);
 document.getElementById("resetAll").addEventListener("click", resetAll);
 document.getElementById("downloadExcel").addEventListener("click", downloadWorkbook);
 document.getElementById("downloadSummary").addEventListener("click", downloadSummary);
+document.getElementById("authForm").addEventListener("submit", submitAuth);
+document.getElementById("toggleAuthMode").addEventListener("click", () => setAuthMode(authMode === "login" ? "signup" : "login"));
+document.getElementById("logoutButton").addEventListener("click", logout);
 document.getElementById("clearHistory").addEventListener("click", () => {
-  localStorage.removeItem(historyKey);
   renderHistory();
-  showToast("Run history cleared.");
+  showToast("Run history refreshed.");
 });
 
 Object.keys(optionSets).forEach(renderCombo);
 renderUploadList();
 updateCustomDateRange();
 buildPrompt();
-renderHistory();
+setAuthMode("login");
+initializeAuth();

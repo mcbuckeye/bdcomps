@@ -1,22 +1,23 @@
 # BeOne Comps Launcher - Mac Setup
 
-This folder contains the local prototype for the BeOne oncology comps launcher.
+This project now runs as a three-tier Docker Compose app:
+
+- React frontend
+- FastAPI/Python backend
+- PostgreSQL database
 
 ## What You Need
 
 - macOS
-- Python 3.10 or newer
-- An OpenAI API key
-
-The app uses only Python standard-library modules, so you should not need to install Python packages for the current prototype.
+- Docker Desktop or Colima-compatible Docker
+- An OpenAI API key in `.env`
 
 ## Start The App
 
-Open Terminal, go to this folder, and run:
+From this folder:
 
 ```bash
-export OPENAI_API_KEY="your_api_key_here"
-./start_comps_launcher_mac.sh
+docker compose up -d --build
 ```
 
 Then open:
@@ -25,21 +26,34 @@ Then open:
 http://127.0.0.1:4174/index.html
 ```
 
+## Check Status
+
+```bash
+docker compose ps
+docker compose logs -f backend
+```
+
 ## Notes
 
 - Do not put your API key into the website UI.
+- Do not commit `.env`.
 - Uploaded `.csv` and `.xlsx` files are treated as candidate leads requiring verification.
+- Backend run records are stored in Postgres.
 - The backend bypasses proxy environment variables by default for OpenAI calls. If your Mac needs a corporate proxy, start with:
 
 ```bash
-export OPENAI_DISABLE_PROXY=0
-./start_comps_launcher_mac.sh
+OPENAI_DISABLE_PROXY=0 docker compose up -d --build
 ```
 
 ## Current Backend Settings
 
-- Port: `4174`
-- OpenAI timeout: `600` seconds
-- OpenAI retries: `3`
+- Frontend port: `4174`
+- Backend internal port: `8000`
+- Local Postgres port: `55432`
+- OpenAI model: `gpt-5.5`
+- OpenAI timeout: `900` seconds
+- OpenAI retries: `4`
+- OpenAI reasoning effort: `high`
+- OpenAI search context size: `high`
 - Max output tokens: `30000`
 - Proxy bypass: enabled by default

@@ -1,32 +1,82 @@
 # BeOne Oncology Comps Launcher
 
-A browser-based launcher for Business Development and M&A teams to configure oncology comps pulls, generate a structured agent prompt, run a live web-search workflow, and export memo-ready outputs.
+A Docker Compose app for Business Development and M&A teams to configure oncology comps pulls, run an OpenAI web-search workflow, persist run history, and export memo-ready outputs.
 
-## Open The App
+## Architecture
 
-Start the backend from this folder with an OpenAI API key, then visit:
+- `frontend`: React + Vite build served by Nginx on `http://127.0.0.1:4174`.
+- `backend`: FastAPI/Python service exposing `/api/pull`, `/api/pull/form`, `/api/runs`, and `/health`.
+- `postgres`: PostgreSQL database storing completed and failed run records.
 
-```text
-$env:OPENAI_API_KEY="YOUR_KEY_HERE"
-python server.py
-http://127.0.0.1:4174/index.html
+The current React app preserves the original launcher UI and controller logic while the backend and database layers have been split into dedicated services.
+
+## Start The App
+
+Create a local `.env` file with your OpenAI API key:
+
+```bash
+OPENAI_API_KEY='your_api_key_here'
 ```
 
-Opening `index.html` directly or using the old static preview server will not run live web search.
+Then run:
 
-## What Is Included
+```bash
+docker compose up -d --build
+```
+
+Open:
+
+```text
+http://127.0.0.1:4174/
+```
+
+For collaborator setup, see [`docs/HENRY_HANDOFF.md`](./docs/HENRY_HANDOFF.md).
+
+## Useful Commands
+
+```bash
+docker compose ps
+docker compose logs -f backend
+docker compose logs -f frontend
+docker compose down
+```
+
+Postgres is exposed locally on port `55432` by default:
+
+```bash
+psql postgresql://bdcomps:bdcomps@127.0.0.1:55432/bdcomps
+```
+
+## Environment
+
+- `OPENAI_API_KEY`: required.
+- `OPENAI_MODEL`: defaults to `gpt-5.5`.
+- `OPENAI_TIMEOUT_SECONDS`: defaults to `900`.
+- `OPENAI_MAX_OUTPUT_TOKENS`: defaults to `30000`.
+- `OPENAI_RETRIES`: defaults to `4`.
+- `OPENAI_REASONING_EFFORT`: defaults to `high`.
+- `OPENAI_SEARCH_CONTEXT_SIZE`: defaults to `high`.
+- `OPENAI_SEARCH_TOKEN_BUDGET`: defaults to `unlimited`.
+- `FRONTEND_PORT`: defaults to `4174`.
+- `POSTGRES_PORT`: defaults to `55432`.
+
+Do not commit `.env`.
+
+## Current Capabilities
 
 - PRD-style launcher form with optional scope fields and custom chip inputs.
 - Structural stripping filters for co-dev, options, equity-only, academic, and related categories.
 - Candidate modes for web-only, pasted raw text, structured rows, and uploaded `.csv` / `.xlsx` database exports.
-- Generated structured prompt preview.
 - Server-backed OpenAI web-search pull for public-source comps.
-- Server-side parsing of uploaded database exports as candidate leads that require verification.
+- FastAPI background pull jobs with Postgres persistence.
 - Excel-openable workbook export with Comps, Stripped Deals audit, and Methodology sheets.
-- Written summary and local run history.
+- Written summary and browser-visible run history.
 
-## Recommended Next Integrations
+## Next Refactors
 
-- Add auth, persistent run history, object storage for generated files, and production compliance review.
+- Replace the legacy DOM controller with idiomatic React state and components.
+- Add first-class server-side run status streaming.
+- Add auth, user-scoped run history, and production compliance review.
 - Replace Excel-openable XML export with a generated `.xlsx` workbook service.
-- Add legacy `.xls` support if any database exports cannot be saved as `.xlsx` or `.csv`.
+
+Detailed PRDs for these additions live in [`docs/prds`](./docs/prds/README.md).
