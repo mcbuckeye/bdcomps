@@ -349,12 +349,37 @@ document.body.classList.add("auth-pending");
 
 const currency = (value) => `$${Number(value || 0).toLocaleString()}M`;
 
+const standardCompHeaders = ["Flag", "Deal", "Asset", "Modality", "Stage", "Territory", "Upfront", "Biobucks", "Primary source"];
+
 function showToast(message) {
   const toast = document.getElementById("toast");
   toast.textContent = message;
   toast.classList.add("show");
   clearTimeout(showToast.timer);
   showToast.timer = setTimeout(() => toast.classList.remove("show"), 2600);
+}
+
+function clearCurrentRun() {
+  currentRun = null;
+  stopRunTimer(false);
+  document.getElementById("metricFound").textContent = "0";
+  document.getElementById("metricClean").textContent = "0";
+  document.getElementById("metricStripped").textContent = "0";
+  document.getElementById("metricConfidence").textContent = "-";
+  document.getElementById("summaryOutput").textContent = "Run a pull to generate the summary.";
+  document.getElementById("compHeaderRow").innerHTML = standardCompHeaders.map((header) => `<th>${escapeHtml(header)}</th>`).join("");
+  document.getElementById("compRows").innerHTML = `<tr><td colspan="9"><strong>No run loaded.</strong><br><small>Run a pull or open a completed run from history.</small></td></tr>`;
+  document.getElementById("strippedRows").innerHTML = `<tr><td colspan="4"><strong>No run loaded.</strong></td></tr>`;
+  document.getElementById("refinementThread").innerHTML = `<article><strong>Ready</strong><span>Open a completed run, then ask for a change.</span></article>`;
+  document.getElementById("refinementInput").value = "";
+  document.getElementById("augmentationInstruction").value = "";
+  const augmentationFiles = document.getElementById("augmentationFiles");
+  if (augmentationFiles) augmentationFiles.value = "";
+  renderAugmentationUploadList();
+  document.getElementById("progressLog").innerHTML = "";
+  document.getElementById("progressFill").style.width = "0%";
+  document.getElementById("runBadge").textContent = "Idle";
+  document.getElementById("runStatus").textContent = "No run started.";
 }
 
 function activeWorkspace() {
@@ -382,6 +407,8 @@ async function apiFetch(url, options = {}) {
   const response = await fetch(url, { credentials: "include", ...options });
   if (response.status === 401) {
     authState = { user: null, workspaces: [], activeWorkspaceId: null };
+    serverHistory = [];
+    clearCurrentRun();
     setAuthUi(false);
   }
   return response;
@@ -420,6 +447,8 @@ async function submitAuth(event) {
       workspaces: payload.workspaces || [],
       activeWorkspaceId: payload.active_workspace_id
     };
+    serverHistory = [];
+    clearCurrentRun();
     setAuthUi(true);
     await renderHistory();
     showToast(authMode === "signup" ? "Account created." : "Signed in.");
@@ -435,8 +464,8 @@ async function logout() {
   }
   await fetchJson("/api/auth/logout", { method: "POST" }).catch(() => null);
   authState = { user: null, workspaces: [], activeWorkspaceId: null };
-  currentRun = null;
   serverHistory = [];
+  clearCurrentRun();
   setAuthUi(false);
   showToast("Signed out.");
 }
@@ -526,7 +555,6 @@ function selectedValues(field) {
 }
 
 function getScope() {
-  const files = [...(document.getElementById("datasetFiles")?.files || [])];
   return {
     tumorType: document.getElementById("tumorType").value.trim(),
     targetMoa: document.getElementById("targetMoa").value.trim(),
@@ -543,7 +571,7 @@ function getScope() {
     candidateMode: mode,
     pullMode: document.getElementById("pullMode")?.value || "standard",
     candidateInput: document.getElementById("candidateInput").value.trim(),
-    uploadedFiles: files.map((file) => ({ name: file.name, size: file.size, type: file.type })),
+    uploadedFiles: [],
     outputs: {
       excel: document.getElementById("wantExcel").checked,
       summary: document.getElementById("wantSummary").checked,
@@ -575,10 +603,7 @@ function buildPrompt() {
     "Candidate list mode:",
     `- ${scope.candidateMode}`,
     scope.candidateInput ? `- Candidate input:\n${scope.candidateInput}` : "- No provided candidates; discover from public sources.",
-    scope.uploadedFiles.length
-      ? `- Uploaded proprietary/database exports: ${scope.uploadedFiles.map((file) => file.name).join(", ")}`
-      : "- No uploaded proprietary/database exports.",
-    "- Treat uploaded database rows as candidate leads requiring source verification, not automatically clean comps.",
+    "- Proprietary/database exports are intentionally excluded from the first pull and can be merged from the Results page after web discovery.",
     "",
     "Output requirements:",
     `- Excel workbook: ${scope.outputs.excel ? "yes" : "no"}`,
@@ -784,8 +809,21 @@ function dedupe(deals) {
   });
 }
 
+function formatCell(value) {
+  if (value === null || value === undefined || value === "") return "";
+  if (Array.isArray(value)) return value.map(formatCell).filter(Boolean).join("; ");
+  if (typeof value === "object") return JSON.stringify(value);
+  return String(value);
+}
+
+function customColumnValue(deal, column) {
+  return formatCell(deal.custom?.[column.key] ?? deal[column.key]);
+}
+
 function renderRun(run) {
   currentRun = run;
+  const customColumns = run.customColumns || [];
+  const totalCompColumns = standardCompHeaders.length + customColumns.length;
   document.getElementById("metricFound").textContent = run.comps.length + run.stripped.length;
   document.getElementById("metricClean").textContent = run.comps.length;
   document.getElementById("metricStripped").textContent = run.stripped.length;
@@ -793,6 +831,10 @@ function renderRun(run) {
   document.getElementById("metricConfidence").textContent = confidence ? `${confidence}%` : "-";
 
   document.getElementById("summaryOutput").innerHTML = buildSummaryHtml(run);
+  document.getElementById("compHeaderRow").innerHTML = [
+    ...standardCompHeaders,
+    ...customColumns.map((column) => column.label)
+  ].map((header) => `<th>${escapeHtml(header)}</th>`).join("");
   const emptyCompMessage = run.fallbackNote
     ? `<strong>No comps returned.</strong><br><small>${escapeHtml(run.fallbackNote)}</small>`
     : `<strong>No clean comps found.</strong><br><small>Broaden scope or uncheck structural filters.</small>`;
@@ -808,8 +850,9 @@ function renderRun(run) {
       <td>${currency(deal.upfront)}</td>
       <td>${currency(deal.biobucks)}</td>
       <td>${sourceLink(deal)}</td>
+      ${customColumns.map((column) => `<td>${escapeHtml(customColumnValue(deal, column))}</td>`).join("")}
     </tr>
-  `).join("") : `<tr><td colspan="9">${emptyCompMessage}</td></tr>`;
+  `).join("") : `<tr><td colspan="${totalCompColumns}">${emptyCompMessage}</td></tr>`;
 
   document.getElementById("strippedRows").innerHTML = run.stripped.length ? run.stripped.map((deal) => `
     <tr>
@@ -819,6 +862,16 @@ function renderRun(run) {
       <td>${escapeHtml(deal.note)}</td>
     </tr>
   `).join("") : `<tr><td colspan="4"><strong>No stripped deals.</strong></td></tr>`;
+
+  const refinementThread = document.getElementById("refinementThread");
+  if (run.refinement) {
+    refinementThread.innerHTML = `
+      <article><strong>Latest refinement</strong><span>${escapeHtml(run.refinement.instruction || "Applied refinement.")}</span></article>
+      ${run.refinementSummary ? `<article><strong>Change summary</strong><span>${escapeHtml(run.refinementSummary)}</span></article>` : ""}
+    `;
+  } else {
+    refinementThread.innerHTML = `<article><strong>Ready</strong><span>Ask for columns, categories, grouping, or memo changes for this completed run.</span></article>`;
+  }
 }
 
 function buildSummaryHtml(run) {
@@ -837,6 +890,7 @@ function buildSummaryHtml(run) {
   return `
     <strong>${run.id}</strong><br>
     ${run.live ? "<span>Live web-search run. Rows are sourced from public web results and primary-source verification prompts.</span><br>" : ""}
+    ${run.refinementSummary ? `<span>Latest refinement: ${escapeHtml(run.refinementSummary)}</span><br>` : ""}
     Scope: ${escapeHtml(scope.modality.join(", ") || "Any modality")} / ${escapeHtml(scope.stage.join(", ") || "Any stage")} / ${escapeHtml(scope.geography.join(", ") || "Any geography")}.<br><br>
     ${liveSummary}
     <ul>
@@ -928,40 +982,22 @@ async function callLiveBackend() {
   if (!workspace) {
     throw new Error("Sign in and select a workspace before running a pull.");
   }
-  const files = [...(document.getElementById("datasetFiles")?.files || [])];
   const pullMode = document.getElementById("pullMode")?.value || "standard";
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), LIVE_BACKEND_TIMEOUT_MS);
   let startPayload;
-  if (files.length) {
-    const form = new FormData();
-    form.append("prompt", promptText || buildPrompt());
-    form.append("scope", JSON.stringify(getScope()));
-    form.append("mode", pullMode);
-    form.append("use_cache", "true");
-    files.forEach((file) => form.append("datasets", file, file.name));
-    try {
-      startPayload = await fetchJson(`/api/workspaces/${workspace.id}/pulls/form`, { method: "POST", body: form, signal: controller.signal });
-    } catch (error) {
-      if (error.name === "AbortError") {
-        throw new Error("Live backend request timed out after 45 minutes. Narrow the scope or rerun later.");
-      }
-      throw error;
+  try {
+    startPayload = await fetchJson(`/api/workspaces/${workspace.id}/pulls`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt: promptText || buildPrompt(), scope: getScope(), mode: pullMode, use_cache: true }),
+      signal: controller.signal
+    });
+  } catch (error) {
+    if (error.name === "AbortError") {
+      throw new Error("Live backend request timed out after 45 minutes. Narrow the scope or rerun later.");
     }
-  } else {
-    try {
-      startPayload = await fetchJson(`/api/workspaces/${workspace.id}/pulls`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt: promptText || buildPrompt(), scope: getScope(), mode: pullMode, use_cache: true }),
-        signal: controller.signal
-      });
-    } catch (error) {
-      if (error.name === "AbortError") {
-        throw new Error("Live backend request timed out after 45 minutes. Narrow the scope or rerun later.");
-      }
-      throw error;
-    }
+    throw error;
   }
 
   if (!startPayload.ok || !startPayload.run_id) {
@@ -1052,8 +1088,23 @@ async function pollBackendRun(workspaceId, runId, signal) {
   }
 }
 
+function normalizeCustomColumns(columns = []) {
+  return columns.map((column, index) => {
+    if (typeof column === "string") {
+      const label = column.trim() || `Custom ${index + 1}`;
+      return { key: label.toLowerCase().replace(/\W+/g, "_").replace(/^_+|_+$/g, ""), label };
+    }
+    const key = String(column.key || "").trim() || `custom_${index + 1}`;
+    return {
+      key,
+      label: String(column.label || key.replace(/_/g, " ")).trim()
+    };
+  });
+}
+
 function normalizeBackendRun(apiRun, meta = {}) {
   const normalizeNumber = (value) => value === null || value === undefined || value === "" ? 0 : Number(value) || 0;
+  const customColumns = normalizeCustomColumns(apiRun.custom_columns || []);
   return {
     id: meta.run_id ? `RUN-${meta.run_id}` : `LIVE-${new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14)}`,
     backendRunId: meta.run_id || null,
@@ -1065,6 +1116,9 @@ function normalizeBackendRun(apiRun, meta = {}) {
     stages: meta.stages || [],
     live: true,
     summary: apiRun.summary || "",
+    refinement: meta.refinement || null,
+    refinementSummary: apiRun.refinement_summary || "",
+    customColumns,
     comps: (apiRun.comps || []).map((deal, index) => ({
       id: `live-${index}`,
       flag: deal.flag || "REVIEW",
@@ -1084,7 +1138,8 @@ function normalizeBackendRun(apiRun, meta = {}) {
       source: deal.primary_source_name || "Primary source",
       sourceUrl: deal.primary_source_url || "",
       confidence: normalizeNumber(deal.confidence),
-      note: deal.analyst_note || ""
+      note: deal.analyst_note || "",
+      custom: deal.custom || {}
     })),
     stripped: (apiRun.stripped_deals || []).map((deal) => ({
       deal: deal.deal || "Unnamed deal",
@@ -1119,7 +1174,7 @@ function buildErrorRun(message, activityLog = []) {
         : "The app did not return comps because the live web-search backend was unavailable. It did not fall back to canned demo data.",
     comps: [],
     stripped: [],
-    uploadedDatasets: scope.uploadedFiles.map((file) => ({ name: file.name, type: file.type || "upload", row_count: 0 })),
+    uploadedDatasets: [],
     activityLog,
     methodology: [
       "No local sample comps were used.",
@@ -1168,7 +1223,22 @@ async function downloadWorkbook() {
   if (workspace && currentRun.backendRunId) {
     const response = await apiFetch(`/api/workspaces/${workspace.id}/runs/${currentRun.backendRunId}/exports/workbook`);
     if (!response.ok) {
-      showToast("Workbook export is not available yet.");
+      let payload = {};
+      try {
+        payload = await response.json();
+      } catch {
+        payload = {};
+      }
+      const detail = typeof payload.detail === "string" ? payload.detail : payload.error;
+      if (response.status === 401) {
+        showToast("Sign in again, then open the completed run from history.");
+      } else if (response.status === 404) {
+        showToast("That run is not in this workspace. Open a completed run from Run History.");
+      } else if (response.status === 409) {
+        showToast(detail || "Workbook export is available after the run completes.");
+      } else {
+        showToast(detail || "Workbook export failed. Check backend logs.");
+      }
       return;
     }
     const blob = await response.blob();
@@ -1211,6 +1281,101 @@ function downloadSummary() {
   }
   const text = document.getElementById("summaryOutput").innerText;
   downloadBlob(`${currentRun.id}-summary.txt`, text, "text/plain;charset=utf-8");
+}
+
+function appendRefinementMessage(title, body) {
+  document.getElementById("refinementThread").insertAdjacentHTML("beforeend", `
+    <article>
+      <strong>${escapeHtml(title)}</strong>
+      <span>${escapeHtml(body)}</span>
+    </article>
+  `);
+}
+
+async function applyRefinement() {
+  if (!currentRun || !currentRun.backendRunId) {
+    showToast("Open a completed backend run first.");
+    return;
+  }
+  const workspace = activeWorkspace();
+  if (!workspace) {
+    showToast("Sign in before refining a run.");
+    return;
+  }
+  const input = document.getElementById("refinementInput");
+  const instruction = input.value.trim();
+  if (!instruction) {
+    showToast("Write a refinement instruction first.");
+    return;
+  }
+  const button = document.getElementById("applyRefinement");
+  button.disabled = true;
+  appendRefinementMessage("You", instruction);
+  appendRefinementMessage("Refining", "Applying the instruction to the saved run.");
+  try {
+    const payload = await fetchJson(`/api/workspaces/${workspace.id}/runs/${currentRun.backendRunId}/refinements`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ instruction })
+    });
+    const refinedRun = normalizeBackendRun(payload.run, payload);
+    renderRun(refinedRun);
+    appendRefinementMessage("Applied", refinedRun.refinementSummary || "Refinement applied. Download Excel to export the latest version.");
+    input.value = "";
+    await renderHistory();
+    showToast("Refinement applied.");
+  } catch (error) {
+    appendRefinementMessage("Could not apply", error.message || "Refinement failed.");
+    showToast(error.message || "Refinement failed.");
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function applyAugmentation() {
+  if (!currentRun || !currentRun.backendRunId) {
+    showToast("Open a completed backend run first.");
+    return;
+  }
+  const workspace = activeWorkspace();
+  if (!workspace) {
+    showToast("Sign in before augmenting a run.");
+    return;
+  }
+  const fileInput = document.getElementById("augmentationFiles");
+  const files = [...(fileInput?.files || [])];
+  if (!files.length) {
+    showToast("Upload at least one database export first.");
+    return;
+  }
+  const instructionInput = document.getElementById("augmentationInstruction");
+  const instruction = instructionInput.value.trim();
+  const button = document.getElementById("applyAugmentation");
+  button.disabled = true;
+  appendRefinementMessage("Database upload", `${files.length} file(s): ${files.map((file) => file.name).join(", ")}`);
+  appendRefinementMessage("Merging", "Filtering uploaded rows for relevant comps and merging them into the saved run.");
+  try {
+    const form = new FormData();
+    form.append("instruction", instruction);
+    files.forEach((file) => form.append("datasets", file, file.name));
+    const payload = await fetchJson(`/api/workspaces/${workspace.id}/runs/${currentRun.backendRunId}/augment/form`, {
+      method: "POST",
+      body: form
+    });
+    const augmentedRun = normalizeBackendRun(payload.run, payload);
+    renderRun(augmentedRun);
+    appendRefinementMessage("Merged", augmentedRun.refinementSummary || "Uploaded database exports were merged into the latest output.");
+    fileInput.value = "";
+    instructionInput.value = "";
+    renderAugmentationUploadList();
+    await renderHistory();
+    showToast("Database exports merged.");
+  } catch (error) {
+    appendRefinementMessage("Could not merge", error.message || "Database augmentation failed.");
+    showToast(error.message || "Database augmentation failed.");
+  } finally {
+    button.disabled = false;
+  }
 }
 
 function downloadBlob(filename, content, type) {
@@ -1290,14 +1455,13 @@ async function openHistoryRun(runId) {
   showView("results");
 }
 
-function renderUploadList() {
-  const files = [...(document.getElementById("datasetFiles")?.files || [])];
-  const uploadList = document.getElementById("uploadList");
+function renderAugmentationUploadList() {
+  const files = [...(document.getElementById("augmentationFiles")?.files || [])];
+  const uploadList = document.getElementById("augmentationUploadList");
   if (!uploadList) return;
   uploadList.innerHTML = files.length
     ? files.map((file) => `<span>${escapeHtml(file.name)} · ${Math.ceil(file.size / 1024).toLocaleString()} KB</span>`).join("")
     : "No uploaded datasets.";
-  updateFilterCount();
 }
 
 function updateCustomDateRange() {
@@ -1314,7 +1478,6 @@ function updateFilterCount() {
     ...scope.dealType,
     ...scope.stage,
     ...scope.geography,
-    ...scope.uploadedFiles.map((file) => file.name),
     scope.minUpfront ? "upfront" : "",
     scope.minBiobucks ? "biobucks" : ""
   ].filter(Boolean).length;
@@ -1338,8 +1501,9 @@ function resetAll() {
   document.getElementById("minUpfront").value = 0;
   document.getElementById("minBiobucks").value = 0;
   document.getElementById("candidateInput").value = "";
-  document.getElementById("datasetFiles").value = "";
-  renderUploadList();
+  document.getElementById("augmentationFiles").value = "";
+  document.getElementById("augmentationInstruction").value = "";
+  renderAugmentationUploadList();
   document.getElementById("targetDeal").value = "";
   document.getElementById("wantExcel").checked = true;
   document.getElementById("wantSummary").checked = true;
@@ -1411,7 +1575,7 @@ document.querySelectorAll(".segmented button").forEach((button) => {
     input.placeholder = mode === "web"
       ? "Optional. Leave blank for web-only discovery."
       : mode === "paste"
-        ? "Paste raw candidate text, screenshots converted to text, or database excerpts."
+        ? "Paste raw candidate text, screenshots converted to text, or source excerpts."
         : "One row per line: Deal | Asset | Upfront | Biobucks | Source";
   });
 });
@@ -1419,7 +1583,7 @@ document.querySelectorAll(".segmented button").forEach((button) => {
 ["tumorType", "targetMoa", "minUpfront", "minBiobucks", "candidateInput", "targetDeal"].forEach((id) => {
   document.getElementById(id).addEventListener("input", updateFilterCount);
 });
-document.getElementById("datasetFiles").addEventListener("change", renderUploadList);
+document.getElementById("augmentationFiles").addEventListener("change", renderAugmentationUploadList);
 
 document.getElementById("dateRange").addEventListener("change", () => {
   updateCustomDateRange();
@@ -1441,6 +1605,8 @@ document.getElementById("runPull").addEventListener("click", runPull);
 document.getElementById("resetAll").addEventListener("click", resetAll);
 document.getElementById("downloadExcel").addEventListener("click", downloadWorkbook);
 document.getElementById("downloadSummary").addEventListener("click", downloadSummary);
+document.getElementById("applyRefinement").addEventListener("click", applyRefinement);
+document.getElementById("applyAugmentation").addEventListener("click", applyAugmentation);
 document.getElementById("authForm").addEventListener("submit", submitAuth);
 document.getElementById("toggleAuthMode").addEventListener("click", () => setAuthMode(authMode === "login" ? "signup" : "login"));
 document.getElementById("logoutButton").addEventListener("click", logout);
@@ -1450,7 +1616,7 @@ document.getElementById("clearHistory").addEventListener("click", () => {
 });
 
 Object.keys(optionSets).forEach(renderCombo);
-renderUploadList();
+renderAugmentationUploadList();
 updateCustomDateRange();
 buildPrompt();
 setAuthMode("login");

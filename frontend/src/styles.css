@@ -467,6 +467,29 @@ textarea { resize: vertical; }
 .summary-box strong { color: var(--ink); }
 .summary-box ul { margin-bottom: 0; }
 
+.refinement-thread {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.refinement-thread article {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfe;
+  padding: 12px;
+}
+
+.refinement-thread strong {
+  display: block;
+  margin-bottom: 4px;
+}
+
+.refinement-thread span {
+  color: var(--muted);
+  line-height: 1.45;
+}
+
 .table-wrap { overflow-x: auto; }
 table { width: 100%; min-width: 980px; border-collapse: collapse; }
 th, td { padding: 13px 10px; text-align: left; border-bottom: 1px solid var(--line); vertical-align: middle; }

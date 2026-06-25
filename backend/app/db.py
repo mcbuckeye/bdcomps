@@ -162,10 +162,26 @@ def initialize_database(max_attempts=30):
                         );
                         """
                     )
+                    cursor.execute(
+                        """
+                        CREATE TABLE IF NOT EXISTS run_refinements (
+                            id BIGSERIAL PRIMARY KEY,
+                            workspace_id BIGINT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+                            run_id BIGINT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+                            user_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
+                            instruction TEXT NOT NULL,
+                            result JSONB NOT NULL,
+                            model TEXT,
+                            openai_response_id TEXT,
+                            created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+                        );
+                        """
+                    )
                     cursor.execute("CREATE INDEX IF NOT EXISTS idx_runs_created_at ON runs (created_at DESC);")
                     cursor.execute("CREATE INDEX IF NOT EXISTS idx_runs_workspace_created_at ON runs (workspace_id, created_at DESC);")
                     cursor.execute("CREATE INDEX IF NOT EXISTS idx_sessions_token_hash ON sessions (token_hash);")
                     cursor.execute("CREATE INDEX IF NOT EXISTS idx_cache_lookup ON pull_cache_entries (workspace_id, cache_key, prompt_version, model, stage);")
+                    cursor.execute("CREATE INDEX IF NOT EXISTS idx_run_refinements_latest ON run_refinements (workspace_id, run_id, created_at DESC);")
                 connection.commit()
             return
         except Exception as exc:
@@ -521,3 +537,43 @@ def save_export_metadata(workspace_id, run_id, export_type, status, file_name=No
             row = cursor.fetchone()
         connection.commit()
     return row
+
+
+def save_run_refinement(workspace_id, run_id, user_id, instruction, result, model=None, openai_response_id=None):
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO run_refinements (workspace_id, run_id, user_id, instruction, result, model, openai_response_id)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                RETURNING id, workspace_id, run_id, user_id, instruction, result, model, openai_response_id, created_at;
+                """,
+                (
+                    workspace_id,
+                    run_id,
+                    user_id,
+                    instruction,
+                    Jsonb(result),
+                    model,
+                    openai_response_id,
+                ),
+            )
+            row = cursor.fetchone()
+        connection.commit()
+    return row
+
+
+def get_latest_run_refinement(workspace_id, run_id):
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT id, workspace_id, run_id, user_id, instruction, result, model, openai_response_id, created_at
+                FROM run_refinements
+                WHERE workspace_id = %s AND run_id = %s
+                ORDER BY created_at DESC, id DESC
+                LIMIT 1;
+                """,
+                (workspace_id, run_id),
+            )
+            return cursor.fetchone()

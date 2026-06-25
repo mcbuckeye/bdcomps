@@ -187,7 +187,7 @@
             <div class="panel-header">
               <div>
                 <h2>Candidate List</h2>
-                <p>Start from pasted deals, structured rows, or web-only discovery.</p>
+                <p>Start with public web discovery; database exports are merged after the first run.</p>
               </div>
             </div>
             <div class="segmented" role="tablist" aria-label="Candidate input mode">
@@ -195,10 +195,6 @@
               <button data-mode="paste">Paste raw</button>
               <button data-mode="rows">Structured rows</button>
             </div>
-            <label class="file-upload">Upload database exports
-              <input id="datasetFiles" type="file" accept=".csv,.xlsx" multiple />
-            </label>
-            <div class="upload-list" id="uploadList">No uploaded datasets.</div>
             <textarea id="candidateInput" rows="8" placeholder="Optional. Paste raw candidate text or one structured row per line."></textarea>
           </section>
 
@@ -293,6 +289,35 @@
         <section class="panel">
           <div class="panel-header">
             <div>
+              <h2>Refine Output</h2>
+              <p>Ask for workbook columns, categories, grouping, or memo edits.</p>
+            </div>
+            <button class="primary-button" id="applyRefinement" type="button">Apply refinement</button>
+          </div>
+          <div class="refinement-thread" id="refinementThread">
+            <article><strong>Ready</strong><span>Open a completed run, then ask for a change.</span></article>
+          </div>
+          <textarea id="refinementInput" rows="4" placeholder="e.g. Add a Platform vs asset-specific column and fill it for each comp."></textarea>
+        </section>
+
+        <section class="panel">
+          <div class="panel-header">
+            <div>
+              <h2>Augment With Database Exports</h2>
+              <p>Upload Cortellis, GlobalData, or internal exports after web discovery.</p>
+            </div>
+            <button class="primary-button" id="applyAugmentation" type="button">Merge uploaded data</button>
+          </div>
+          <label class="file-upload">Upload database exports
+            <input id="augmentationFiles" type="file" accept=".csv,.xlsx" multiple />
+          </label>
+          <div class="upload-list" id="augmentationUploadList">No uploaded datasets.</div>
+          <textarea id="augmentationInstruction" rows="3" placeholder="Optional. e.g. Prioritize ADC asset acquisitions and flag duplicates."></textarea>
+        </section>
+
+        <section class="panel">
+          <div class="panel-header">
+            <div>
               <h2>Comps</h2>
               <p>Primary-source verified rows that pass structural filters.</p>
             </div>
@@ -300,7 +325,7 @@
           <div class="table-wrap">
             <table>
               <thead>
-                <tr>
+                <tr id="compHeaderRow">
                   <th>Flag</th>
                   <th>Deal</th>
                   <th>Asset</th>

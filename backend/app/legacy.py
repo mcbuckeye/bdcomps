@@ -111,6 +111,24 @@ You must produce strict JSON only, no markdown, matching this shape:
 """
 
 
+REFINEMENT_SYSTEM_PROMPT = """You are an oncology BD/M&A comps refinement agent for BeOne Medicines.
+
+You receive an existing public-source oncology comps result JSON and a user refinement instruction.
+Return a full revised result JSON only, with no markdown.
+
+Rules:
+- Preserve the original run unless the user explicitly asks to remove, reorder, regroup, or rename something.
+- Keep the standard top-level fields when present: summary, comps, stripped_deals, methodology, uploaded_datasets, activity_log.
+- Keep every standard comp field when present: flag, deal, acquirer, target_company, asset, target_moa, indication, modality, stage, geography, deal_type, announcement_date, announced_or_completed, upfront_usd_m, total_value_usd_m, royalty, primary_source_name, primary_source_url, confidence, analyst_note.
+- For requested workbook columns or categories that do not fit a standard field, add top-level custom_columns as an array of objects: {"key":"snake_case_key","label":"Workbook Column Label","description":"short definition"}.
+- Put per-comp values for custom columns in each comp's custom object, keyed by custom_columns.key.
+- If a requested value cannot be determined from the existing result or public source verification, use null and explain briefly in analyst_note or methodology.
+- Do not invent deals, economics, stages, dates, URLs, or source names.
+- If web lookup is needed to fill a requested refinement, prefer primary sources and preserve confidence flags.
+- Include a short refinement_summary describing what changed.
+"""
+
+
 def json_response(handler, status, payload):
     body = json.dumps(payload).encode("utf-8")
     handler.send_response(status)
@@ -302,6 +320,119 @@ def call_openai(prompt, scope, log):
             },
         }
     ]
+    return parsed
+
+
+def call_openai_refinement(run_result, instruction, scope, log):
+    api_key = os.environ.get("OPENAI_API_KEY")
+    if not api_key:
+        activity(log, "OpenAI authentication check failed", "OPENAI_API_KEY is not set.")
+        raise RuntimeError(
+            "OPENAI_API_KEY is not set. Start this backend with an OpenAI API key so refinements can run."
+        )
+
+    activity(
+        log,
+        "OpenAI refinement request started",
+        "Sending saved comps result and user instruction to the refinement agent.",
+        model=MODEL,
+        timeout_seconds=OPENAI_TIMEOUT_SECONDS,
+        max_output_tokens=MAX_OUTPUT_TOKENS,
+    )
+    started = time.time()
+    payload = {
+        "model": MODEL,
+        "tools": [
+            {
+                "type": "web_search",
+                "search_context_size": OPENAI_SEARCH_CONTEXT_SIZE,
+                "return_token_budget": OPENAI_SEARCH_TOKEN_BUDGET,
+            }
+        ],
+        "tool_choice": "auto",
+        "reasoning": {"effort": OPENAI_REASONING_EFFORT},
+        "max_output_tokens": MAX_OUTPUT_TOKENS,
+        "input": [
+            {"role": "system", "content": REFINEMENT_SYSTEM_PROMPT},
+            {
+                "role": "user",
+                "content": (
+                    "Apply this refinement instruction to the saved oncology comps result.\n\n"
+                    f"Current date: {date.today().isoformat()}.\n\n"
+                    f"User refinement instruction:\n{instruction}\n\n"
+                    f"Original structured scope JSON:\n{json.dumps(scope or {}, indent=2)}\n\n"
+                    f"Current saved result JSON:\n{json.dumps(run_result or {}, indent=2)}\n\n"
+                    "Return the complete revised result JSON. If adding workbook columns, use custom_columns plus per-comp custom values."
+                ),
+            },
+        ],
+    }
+
+    data = json.dumps(payload).encode("utf-8")
+    request = urllib.request.Request(
+        OPENAI_URL,
+        data=data,
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({})) if OPENAI_DISABLE_PROXY else urllib.request.build_opener()
+    last_error = None
+    for attempt in range(1, OPENAI_RETRIES + 1):
+        try:
+            activity(
+                log,
+                "OpenAI refinement connection attempt",
+                "Attempting to contact OpenAI.",
+                attempt=attempt,
+                max_attempts=OPENAI_RETRIES,
+            )
+            with opener.open(request, timeout=OPENAI_TIMEOUT_SECONDS) as response:
+                raw = response.read().decode("utf-8")
+            break
+        except (urllib.error.URLError, TimeoutError, socket.timeout) as exc:
+            last_error = exc
+            activity(
+                log,
+                "OpenAI refinement connection attempt failed",
+                str(exc),
+                attempt=attempt,
+                max_attempts=OPENAI_RETRIES,
+            )
+            if attempt < OPENAI_RETRIES:
+                time.sleep(2 * attempt)
+    else:
+        raise last_error
+
+    openai_response = json.loads(raw)
+    activity(
+        log,
+        "OpenAI refinement response received",
+        "Raw refinement response received from OpenAI.",
+        elapsed_seconds=round(time.time() - started, 1),
+        response_bytes=len(raw),
+        response_id=openai_response.get("id") or "",
+    )
+    output_text = extract_output_text(openai_response)
+    parsed, repaired_json = parse_json_text(output_text)
+    parsed["openai_response_id"] = openai_response.get("id")
+    parsed["model"] = MODEL
+    if repaired_json:
+        activity(
+            log,
+            "Refinement JSON repaired",
+            "Backend repaired invalid JSON escape characters before parsing model output.",
+        )
+    activity(
+        log,
+        "Refinement JSON parsed",
+        "Parsed refined result into comps, stripped deals, methodology, and custom columns.",
+        clean_comps=len(parsed.get("comps", [])),
+        stripped_deals=len(parsed.get("stripped_deals", [])),
+        custom_columns=len(parsed.get("custom_columns", [])),
+    )
     return parsed
 
 
