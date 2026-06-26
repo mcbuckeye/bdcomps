@@ -29,6 +29,10 @@ services:
         condition: service_healthy
     expose:
       - "8000"
+    networks:
+      default:
+        aliases:
+          - bdcomps-backend
     restart: unless-stopped
     healthcheck:
       test:
