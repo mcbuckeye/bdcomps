@@ -267,6 +267,14 @@ p, small, .panel-header p, .metric span, .summary-box, .history-list span { colo
   gap: 6px;
 }
 
+.action-status {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
 .run-elapsed {
   color: var(--muted);
   font-size: 12px;
@@ -677,8 +685,18 @@ th { color: var(--muted); font-size: 12px; text-transform: uppercase; }
   }
 
   .panel-header > .topbar-actions,
+  .panel-header > .action-status,
   .panel-header > button {
     width: 100%;
+  }
+
+  .panel-header > .action-status {
+    justify-content: flex-start;
+  }
+
+  .panel-header > .action-status .primary-button {
+    flex: 1;
+    justify-content: center;
   }
 
   .panel-header > button {

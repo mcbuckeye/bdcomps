@@ -372,7 +372,17 @@ function clearCurrentRun() {
   document.getElementById("strippedRows").innerHTML = `<tr><td colspan="4"><strong>No run loaded.</strong></td></tr>`;
   document.getElementById("refinementThread").innerHTML = `<article><strong>Ready</strong><span>Open a completed run, then ask for a change.</span></article>`;
   document.getElementById("refinementInput").value = "";
+  const refinementElapsed = document.getElementById("refinementElapsed");
+  if (refinementElapsed) {
+    refinementElapsed.hidden = true;
+    refinementElapsed.textContent = "";
+  }
   document.getElementById("augmentationInstruction").value = "";
+  const augmentationElapsed = document.getElementById("augmentationElapsed");
+  if (augmentationElapsed) {
+    augmentationElapsed.hidden = true;
+    augmentationElapsed.textContent = "";
+  }
   const augmentationFiles = document.getElementById("augmentationFiles");
   if (augmentationFiles) augmentationFiles.value = "";
   renderAugmentationUploadList();
@@ -512,6 +522,30 @@ function stopRunTimer(keepFinal = true) {
   } else {
     updateRunElapsed();
   }
+}
+
+function startActionTimer(button, elapsedElement, busyLabel) {
+  const originalText = button.textContent;
+  const startedAt = Date.now();
+  const update = () => {
+    const elapsed = formatElapsed(Math.floor((Date.now() - startedAt) / 1000));
+    button.textContent = `${busyLabel} (${elapsed})`;
+    if (elapsedElement) {
+      elapsedElement.hidden = false;
+      elapsedElement.textContent = `Elapsed ${elapsed}`;
+    }
+  };
+  update();
+  const timer = setInterval(update, 1000);
+  return (finalLabel = "Finished in") => {
+    clearInterval(timer);
+    const elapsed = formatElapsed(Math.floor((Date.now() - startedAt) / 1000));
+    button.textContent = originalText;
+    if (elapsedElement) {
+      elapsedElement.hidden = false;
+      elapsedElement.textContent = `${finalLabel} ${elapsed}`;
+    }
+  };
 }
 
 function renderCombo(field) {
@@ -1310,6 +1344,8 @@ async function applyRefinement() {
   }
   const button = document.getElementById("applyRefinement");
   button.disabled = true;
+  const stopTimer = startActionTimer(button, document.getElementById("refinementElapsed"), "Applying refinement");
+  let completed = false;
   appendRefinementMessage("You", instruction);
   appendRefinementMessage("Refining", "Applying the instruction to the saved run.");
   try {
@@ -1323,11 +1359,13 @@ async function applyRefinement() {
     appendRefinementMessage("Applied", refinedRun.refinementSummary || "Refinement applied. Download Excel to export the latest version.");
     input.value = "";
     await renderHistory();
+    completed = true;
     showToast("Refinement applied.");
   } catch (error) {
     appendRefinementMessage("Could not apply", error.message || "Refinement failed.");
     showToast(error.message || "Refinement failed.");
   } finally {
+    stopTimer(completed ? "Finished in" : "Stopped after");
     button.disabled = false;
   }
 }
@@ -1352,6 +1390,8 @@ async function applyAugmentation() {
   const instruction = instructionInput.value.trim();
   const button = document.getElementById("applyAugmentation");
   button.disabled = true;
+  const stopTimer = startActionTimer(button, document.getElementById("augmentationElapsed"), "Merging uploaded data");
+  let completed = false;
   appendRefinementMessage("Database upload", `${files.length} file(s): ${files.map((file) => file.name).join(", ")}`);
   appendRefinementMessage("Merging", "Filtering uploaded rows for relevant comps and merging them into the saved run.");
   try {
@@ -1369,11 +1409,13 @@ async function applyAugmentation() {
     instructionInput.value = "";
     renderAugmentationUploadList();
     await renderHistory();
+    completed = true;
     showToast("Database exports merged.");
   } catch (error) {
     appendRefinementMessage("Could not merge", error.message || "Database augmentation failed.");
     showToast(error.message || "Database augmentation failed.");
   } finally {
+    stopTimer(completed ? "Finished in" : "Stopped after");
     button.disabled = false;
   }
 }

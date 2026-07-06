@@ -292,7 +292,10 @@
               <h2>Refine Output</h2>
               <p>Ask for workbook columns, categories, grouping, or memo edits.</p>
             </div>
-            <button class="primary-button" id="applyRefinement" type="button">Apply refinement</button>
+            <div class="action-status">
+              <span class="run-elapsed" id="refinementElapsed" hidden></span>
+              <button class="primary-button" id="applyRefinement" type="button">Apply refinement</button>
+            </div>
           </div>
           <div class="refinement-thread" id="refinementThread">
             <article><strong>Ready</strong><span>Open a completed run, then ask for a change.</span></article>
@@ -306,7 +309,10 @@
               <h2>Augment With Database Exports</h2>
               <p>Upload Cortellis, GlobalData, or internal exports after web discovery.</p>
             </div>
-            <button class="primary-button" id="applyAugmentation" type="button">Merge uploaded data</button>
+            <div class="action-status">
+              <span class="run-elapsed" id="augmentationElapsed" hidden></span>
+              <button class="primary-button" id="applyAugmentation" type="button">Merge uploaded data</button>
+            </div>
           </div>
           <label class="file-upload">Upload database exports
             <input id="augmentationFiles" type="file" accept=".csv,.xlsx" multiple />
