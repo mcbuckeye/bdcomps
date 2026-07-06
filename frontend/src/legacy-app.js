@@ -1058,11 +1058,19 @@ async function callLiveBackend() {
 
 async function fetchJson(url, options = {}) {
   const response = await apiFetch(url, options);
+  const text = await response.text();
   let payload = null;
   try {
-    payload = await response.json();
+    payload = text ? JSON.parse(text) : null;
   } catch {
-    throw new Error("Live backend is not returning JSON. Check backend logs.");
+    const snippet = text.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim().slice(0, 180);
+    if (response.status === 413) {
+      throw new Error("Upload rejected by the live server: file payload is too large for the proxy. Try a smaller export or redeploy with the larger upload limit.");
+    }
+    if ([502, 503, 504].includes(response.status)) {
+      throw new Error(`Live proxy returned ${response.status} ${response.statusText || ""}. The backend may be restarting or the request timed out before JSON returned.`);
+    }
+    throw new Error(`Live backend returned non-JSON (${response.status} ${response.statusText || "unknown"}). ${snippet || "Check backend/proxy logs."}`);
   }
   if (!response.ok) {
     const detail = typeof payload?.detail === "string" ? payload.detail : payload?.detail?.error;
